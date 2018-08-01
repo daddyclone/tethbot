@@ -1,0 +1,14 @@
+!!python/object:markov_bot.TethFactory
+args: !!python/tuple []
+corpus: teth_prime
+channels: ['#apu']
+kwargs: {}
+nick: teth_prime
+port: 6697
+server: irc.rizon.net
+state_size: 3
+tls: true
+tls_verify: false
+bot_password: faggotmonster
+bully: teth
+markov: MarkovTeth

@@ -1,0 +1,6 @@
+climate==0.4.6
+markovify==0.7.1
+nltk==3.3
+pydle==0.8.4
+pytest==3.6.4
+PyYAML==3.13
