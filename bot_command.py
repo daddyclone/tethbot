@@ -29,7 +29,7 @@ def dup2(stream):
 class BotCommand(object):
 
     def __init__(
-            self, name: str, bot: TethBot, parser_root: argparse._SubParsersAction
+        self, name: str, bot: TethBot, parser_root: argparse._SubParsersAction
     ):
         self.bot = bot
         self.parser = parser_root.add_parser(name)
@@ -37,6 +37,7 @@ class BotCommand(object):
 
     def execute(self, namespace):
         print(f"Command {self.__class__}:{namespace}")
+
 
 class SayCommand(BotCommand):
 
@@ -81,12 +82,16 @@ class TriggerCommand(BotCommand):
 
 
 class JoinCommand(BotCommand):
+
     def __init__(self, bot: TethBot, parser_root: argparse._SubParsersAction):
         super().__init__("join", bot, parser_root)
         self.parser.add_argument("target")
 
     def execute(self, namespace):
+        if namespace.target in self.bot.startup_channels:
+            return
         self.bot.eventloop.schedule(self.bot.join, namespace.target)
+        self.bot.startup_channels.append(namespace.target)
 
 
 class CycleCommand(BotCommand):
@@ -101,22 +106,29 @@ class CycleCommand(BotCommand):
 
 
 class PartCommand(BotCommand):
+
     def __init__(self, bot: TethBot, parser_root: argparse._SubParsersAction):
         super().__init__("part", bot, parser_root)
         self.parser.add_argument("target")
         self.parser.add_argument("--message", type=str)
 
     def execute(self, namespace):
-        msg = namespace.message if 'message' in namespace else None
+        if namespace.target not in self.bot.startup_channels:
+            return
+        msg = namespace.message if "message" in namespace else None
         self.bot.eventloop.schedule(self.bot.part, namespace.target, message=msg)
+        self.bot.startup_channels.remove(namespace.target)
+
 
 class NickCommand(BotCommand):
+
     def __init__(self, bot: TethBot, parser_root: argparse._SubParsersAction):
         super().__init__("nick", bot, parser_root)
         self.parser.add_argument("newnick")
 
     def execute(self, namespace):
         self.bot.eventloop.schedule(self.bot.set_nickname, namespace.newnick)
+
 
 def parse_privmsg(bot: TethBot, source: str, target: str, message: str):
     # First argument is password.

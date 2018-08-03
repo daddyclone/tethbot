@@ -17,7 +17,11 @@ class POSifiedText(markovify.Text):
         return sentence
 
 
-class MarkovTeth(object):
+class RandomModel(object):
+    pass
+
+
+class MarkovTeth(RandomModel):
 
     def __init__(self, corpus="teth_chat", state_size=3):
         with open(corpus) as f:
@@ -27,7 +31,7 @@ class MarkovTeth(object):
         logging.info(f" done training model on {corpus}")
 
 
-class Markov(object):
+class Markov(RandomModel):
 
     def __init__(self, corpus="teth_chat", state_size=3):
         with open(corpus) as f:

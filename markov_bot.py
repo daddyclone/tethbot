@@ -3,10 +3,19 @@ import random
 import re
 import string
 import collections
+import attr
+import typing
 
 import nltk
 import pydle
 import crazy_text
+
+
+@attr.s(frozen=True, slots=True)
+class BanEntry(object):
+    mask: str = attr.ib()
+    responsible: str = attr.ib()
+    ts: int = attr.ib(converter=int)
 
 
 class TethFactory(object):
@@ -64,21 +73,27 @@ class TethBot(pydle.Client):
     __version__ = 43.3
 
     def __init__(self, *args, **kwargs):
-        self.line_counter = collections.Counter()
-        self.mention_count = collections.Counter()
-        self.word_split_pattern = re.compile(r"\s+")
-        self.punctuation_table = str.maketrans(dict.fromkeys(string.punctuation))
-        self.startup_channels = kwargs.get("channels", [])
-        self.model = kwargs.get("model", None)
-        self.bully = kwargs.get("bully", "teth")
-        self.ignore_nicks = kwargs.get("ignore_nicks", [])
-        self.bot_password = kwargs.get("bot_password", "nigger6")
-        logging.info(f"Channels {self.startup_channels}")
+        self.line_counter: collections.Counter = collections.Counter()
+        self.mention_count: collections.Counter = collections.Counter()
+        self.word_split_pattern: typing.Pattern = re.compile(r"\s+")
+        self.punctuation_table: typing.Dict[str, str] = str.maketrans(
+            dict.fromkeys(string.punctuation)
+        )
+        self.startup_channels: typing.List[str] = kwargs.get("channels", [])
+        self.model: crazy_text.RandomModel = kwargs.get("model", None)
+        self.bully: str = kwargs.get("bully", "teth")
+        self.ignore_nicks: typing.List[str] = kwargs.get("ignore_nicks", [])
+        self.bot_password: str = kwargs.get("bot_password", "nigger6")
+        self.ban_lists: typing.Dict[str, typing.Set[BanEntry]] = {}
+        self.ban_lists_waiting: typing.Dict[str, bool] = {}
+        self.public_chattiness: int = kwargs.get("public_chattiness", 20)
+        self.mention_chattiness: int = kwargs.get("mention_chattiness", 5)
+        logging.debug(f"Channels {self.startup_channels}")
         super(pydle.Client, self).__init__(*args, **kwargs)
 
     @pydle.coroutine
     def on_connect(self):
-        logging.info(f" In connect and my channels are {self.startup_channels}")
+        logging.debug(f" In connect and my channels are {self.startup_channels}")
         for channel in self.startup_channels:
             logging.info(f"Joining {channel}")
             self.eventloop.schedule(self.join, channel)
@@ -92,7 +107,7 @@ class TethBot(pydle.Client):
 
     @pydle.coroutine
     def timers(self):
-        logging.info("Timers.")
+        logging.debug("Timers.")
 
         # check if we're still joined to channels or if we've been emo-kicked...
         for x in set(self.startup_channels) - set(self.channels.keys()):
@@ -109,13 +124,56 @@ class TethBot(pydle.Client):
     def on_invite(self, channel, by):
         logging.info(f"Invited to {channel} by {by}. Joining!")
         self.eventloop.schedule(self.join, channel)
+        self.startup_channels.append(channel)
 
-    # @pydle.coroutine
-    # def on_join(self, channel, nick):
-    #     if self.is_same_nick(self.nickname, nick):
-    #         self.eventloop.schedule(
-    #             lambda: self.message(channel, self._gen_random_sentence())
-    #         )
+    @pydle.coroutine
+    def on_raw_473(self, message):
+        """Cannot join channel, invite only, knock"""
+        self.rawmsg("knock", message.params[1])
+
+    @pydle.coroutine
+    def on_raw_474(self, message):
+        """Cannot join channel, banned. Trigger getting banlist """
+        channel = message.params[1]
+        if channel in self.ban_lists_waiting:
+            # Already requesting banlist
+            return
+        self.ban_lists[channel] = set()
+        self.ban_lists_waiting[channel] = True
+        self.rawmsg("mode", channel, "+b")
+
+    @pydle.coroutine
+    def on_raw_367(self, message):
+        """ getting banlist entry... """
+        if len(message.params) < 5:
+            logging.debug("Ban list has wrong number of paramters")
+            return
+        channel = message.params[1]
+        mask = message.params[2]
+        emo = message.params[3]
+        ts = message.params[4]
+        self.ban_lists[channel].add(BanEntry(mask=mask, responsible=emo, ts=ts))
+
+    @pydle.coroutine
+    def on_raw_368(self, message):
+        """ done getting banlist """
+        channel = message.params[1]
+        if channel in self.ban_lists:
+            logging.debug(self.ban_lists[channel])
+        if channel in self.ban_lists_waiting:
+            del self.ban_lists_waiting[channel]
+
+    @pydle.coroutine
+    def on_raw_404(self, message):
+        """Cannot send to channel, banned or moderated. Send random privmsg to random if cannot evade"""
+        random_nick = random.choice(
+            list(
+                self.channels[message.params[1]]["users"]
+                - ({self.nickname} | set(self.ignore_nicks))
+            )
+        )
+        sentence = self._gen_random_sentence()
+        self.eventloop.schedule(self.message, random_nick, sentence)
 
     @pydle.coroutine
     def on_message(self, source, target, message):
@@ -132,8 +190,13 @@ class TethBot(pydle.Client):
             self.eventloop.schedule(parse_privmsg, self, source, target, message)
             return
 
+        # CAW CAW
+        if self.is_same_nick(source, self.nickname):
+            self.message(target, message)
+            return
+
         # public message
-        logging.info(
+        logging.debug(
             f"Lines since Blog {self.line_counter[source]}, Mentions: {self.mention_count[source]}"
         )
         try:
@@ -143,8 +206,11 @@ class TethBot(pydle.Client):
             if is_mentioned:
                 self.mention_count[source] += 1
             if (
-                self.line_counter[source] % 20 == 0
-                or (is_mentioned and self.mention_count[source] % 5 == 0)
+                self.line_counter[source] % self.public_chattiness == 0
+                or (
+                    is_mentioned
+                    and self.mention_count[source] % self.mention_chattiness == 0
+                )
                 or f"!{self.bully}" in lcm
             ):
                 self.line_counter[source] = 0
@@ -154,9 +220,16 @@ class TethBot(pydle.Client):
         except:
             logging.exception("some gay shit")
 
-    def _blog_task(self, message, source, target):
-        # Try to generate one based on context...
-        # Search for a few seconds, if nothing is found, just use a random quip.
+    def _blog_task(self, message : str, source : str, target : str):
+        """
+        Try to generate one based on context...
+        Search for a few seconds, if nothing is found, just use a random quip.
+
+        :param message:
+        :param source:
+        :param target:
+        :return:
+        """
         for idx in range(random.randint(1, 3)):
             nouns = self._nouns_in_sentence(message)
             if len(nouns) > 0:
@@ -169,12 +242,25 @@ class TethBot(pydle.Client):
                 )[0]
                 self.message(source, f"{heading}{sentence}")
 
-    def _search(self, message, nouns, source, target):
+    def _search(self, message : str, nouns : typing.List[str], source : str, target : str):
+        """
+        Search for a sentence that contains nouns
+        :param message:
+        :param nouns: List of topics
+        :param source: Channel
+        :param target: Person
+        :return:
+        """
         return self._gen_related_sentence(nouns, source, target)
 
-    def _nouns_in_sentence(self, message):
+    def _nouns_in_sentence(self, message : str):
+        """
+        Return
+        :param message:
+        :return:
+        """
         tokens = nltk.word_tokenize(message)
-        logging.info(f"Tokens '{tokens}'")
+        logging.debug(f"Tokens '{tokens}'")
         nouns = list(
             map(
                 lambda y: y[0],
@@ -185,10 +271,10 @@ class TethBot(pydle.Client):
         )
         nouns = list(map(lambda x: x.translate(self.punctuation_table), nouns))
         nouns = list(filter(lambda x: x != self.bully, nouns))
-        logging.info(f"Nouns: {nouns}")
+        logging.debug(f"Nouns: {nouns}")
         return nouns
 
-    def _gen_related_sentence(self, nouns, source, target):
+    def _gen_related_sentence(self, nouns : typing.List[str], source : str, target : str):
         flag_found = False
         idx = 0
         s = ""
@@ -223,7 +309,7 @@ class TethBot(pydle.Client):
         return s
 
     def _gen_random_sentence(self):
-        logging.warning("Using total random one")
+        logging.debug("Using total random one")
         sentence = self.model.make_sentence()
         while sentence is None or sentence == "None":
             sentence = self.model.make_sentence()
