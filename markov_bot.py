@@ -146,7 +146,7 @@ class TethBot(pydle.Client):
     def on_raw_367(self, message):
         """ getting banlist entry... """
         if len(message.params) < 5:
-            logging.debug("Ban list has wrong number of paramters")
+            logging.debug("Ban list has wrong number of parameters")
             return
         channel = message.params[1]
         mask = message.params[2]
